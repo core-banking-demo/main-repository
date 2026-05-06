@@ -1,0 +1,153 @@
+services:
+  api-gateway:
+    build:
+      context: ./api-gateway-service
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      - banking-service
+      - rabbitmq
+    environment:
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-CHANGEMEINPROD}
+      KEYCLOAK_URL: http://keycloak:8080
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db-identity:5432/${IDENTITY_DB_NAME:-identity_db}
+      SPRING_DATASOURCE_USERNAME: ${IDENTITY_DB_USER:-admin}
+      SPRING_DATASOURCE_PASSWORD: ${IDENTITY_DB_PASSWORD:-changemeinprod!}
+      SPRING_CLOUD_GATEWAY_SERVER_WEBMVC_ROUTES_0_URI: http://banking-service:8081
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: guest
+      SPRING_RABBITMQ_PASSWORD: guest
+    networks:
+      - demo-network
+
+  banking-service:
+    build:
+      context: ./banking-service
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db-banking:5432/banking_db
+      SPRING_DATASOURCE_USERNAME: myuser
+      SPRING_DATASOURCE_PASSWORD: mypassword
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://keycloak:8080/realms/corebanking-demo
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: guest
+      SPRING_RABBITMQ_PASSWORD: guest
+    networks:
+      - demo-network
+    depends_on:
+      - db-banking
+      - rabbitmq
+
+  notification-service:
+    build:
+      context: ./notification-service
+      dockerfile: Dockerfile
+    ports:
+      - "8083:8083"
+    environment:
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: guest
+      SPRING_RABBITMQ_PASSWORD: guest
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-CHANGEMEINPROD}
+    depends_on:
+      - rabbitmq
+    networks:
+      - demo-network
+
+  # Databases and external tools
+  db-banking:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: banking_db
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mypassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - banking-db-data:/var/lib/postgresql/data
+    networks:
+      - demo-network
+
+  db-identity:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: identity_db
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: changemeinprod!
+    ports:
+      - "5433:5432"
+    volumes:
+      - identity-db-data:/var/lib/postgresql/data
+    networks:
+      - demo-network
+
+  keycloak-db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: changemeinprod!
+    volumes:
+      - keycloak-db-data:/var/lib/postgresql/data
+    networks:
+      - demo-network
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: user
+      KC_DB_PASSWORD: changemeinprod!
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KEYCLOAK_SMTP_HOST: ${KEYCLOAK_SMTP_HOST:-mailhog}
+      KEYCLOAK_SMTP_PORT: ${KEYCLOAK_SMTP_PORT:-1025}
+      KEYCLOAK_SMTP_FROM: ${KEYCLOAK_SMTP_FROM:-no-reply@corebanking.local}
+      KEYCLOAK_SMTP_REPLY_TO: ${KEYCLOAK_SMTP_REPLY_TO:-no-reply@corebanking.local}
+      KEYCLOAK_SMTP_USER: ${KEYCLOAK_SMTP_USER:-}
+      KEYCLOAK_SMTP_PASSWORD: ${KEYCLOAK_SMTP_PASSWORD:-}
+      KEYCLOAK_SMTP_AUTH: ${KEYCLOAK_SMTP_AUTH:-false}
+      KEYCLOAK_SMTP_STARTTLS: ${KEYCLOAK_SMTP_STARTTLS:-false}
+      KEYCLOAK_SMTP_SSL: ${KEYCLOAK_SMTP_SSL:-false}
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./api-gateway-service/keycloak-config:/opt/keycloak/data/import
+    depends_on:
+      - keycloak-db
+    networks:
+      - demo-network
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - demo-network
+
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - demo-network
+
+volumes:
+  banking-db-data:
+  identity-db-data:
+  keycloak-db-data:
+
+networks:
+  demo-network:
+    driver: bridge
