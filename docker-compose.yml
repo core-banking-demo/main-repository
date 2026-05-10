@@ -107,6 +107,7 @@ services:
       KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
       KC_DB_USERNAME: user
       KC_DB_PASSWORD: changemeinprod!
+      KC_HOSTNAME_URL: http://localhost:8082
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
       KEYCLOAK_SMTP_HOST: ${KEYCLOAK_SMTP_HOST:-mailhog}
