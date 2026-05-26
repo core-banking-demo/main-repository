@@ -6,15 +6,20 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - banking-service
-      - rabbitmq
+      db-identity:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     environment:
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-CHANGEMEINPROD}
       KEYCLOAK_URL: http://keycloak:8080
       SPRING_DATASOURCE_URL: jdbc:postgresql://db-identity:5432/${IDENTITY_DB_NAME:-identity_db}
       SPRING_DATASOURCE_USERNAME: ${IDENTITY_DB_USER:-admin}
       SPRING_DATASOURCE_PASSWORD: ${IDENTITY_DB_PASSWORD:-changemeinprod!}
-      SPRING_CLOUD_GATEWAY_SERVER_WEBMVC_ROUTES_0_URI: http://banking-service:8081
+      BANKING_SERVICE_URL: http://banking-service:8081
+      GRPC_BANKING_SERVICE_TARGET: banking-service:9090
       SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_RABBITMQ_PORT: 5672
       SPRING_RABBITMQ_USERNAME: guest
@@ -28,11 +33,13 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8081:8081"
+      - "9090:9090"
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db-banking:5432/banking_db
       SPRING_DATASOURCE_USERNAME: myuser
       SPRING_DATASOURCE_PASSWORD: mypassword
-      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://keycloak:8080/realms/corebanking-demo
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://localhost:8082/realms/corebanking-demo
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://keycloak:8080/realms/corebanking-demo/protocol/openid-connect/certs
       SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_RABBITMQ_PORT: 5672
       SPRING_RABBITMQ_USERNAME: guest
@@ -40,8 +47,10 @@ services:
     networks:
       - demo-network
     depends_on:
-      - db-banking
-      - rabbitmq
+      db-banking:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
   notification-service:
     build:
@@ -57,13 +66,17 @@ services:
       KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-CHANGEMEINPROD}
     depends_on:
-      - rabbitmq
+      keycloak:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     networks:
       - demo-network
 
-  # Databases and external tools
+  # ── Databases ─────────────────────────────────────────────────────────
+
   db-banking:
-    image: postgres:15
+    image: postgres:15-alpine
     environment:
       POSTGRES_DB: banking_db
       POSTGRES_USER: myuser
@@ -72,11 +85,16 @@ services:
       - "5432:5432"
     volumes:
       - banking-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U myuser -d banking_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - demo-network
 
   db-identity:
-    image: postgres:15
+    image: postgres:15-alpine
     environment:
       POSTGRES_DB: identity_db
       POSTGRES_USER: admin
@@ -85,19 +103,31 @@ services:
       - "5433:5432"
     volumes:
       - identity-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d identity_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - demo-network
 
   keycloak-db:
-    image: postgres:15
+    image: postgres:15-alpine
     environment:
       POSTGRES_DB: keycloak
       POSTGRES_USER: user
       POSTGRES_PASSWORD: changemeinprod!
     volumes:
       - keycloak-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - demo-network
+
+  # ── Identity Provider ─────────────────────────────────────────────────
 
   keycloak:
     image: quay.io/keycloak/keycloak:latest
@@ -107,7 +137,8 @@ services:
       KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
       KC_DB_USERNAME: user
       KC_DB_PASSWORD: changemeinprod!
-      KC_HOSTNAME_URL: http://localhost:8082
+      KC_HOSTNAME: http://localhost:8082
+      KC_HEALTH_ENABLED: "true"
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
       KEYCLOAK_SMTP_HOST: ${KEYCLOAK_SMTP_HOST:-mailhog}
@@ -123,18 +154,34 @@ services:
       - "8082:8080"
     volumes:
       - ./api-gateway-service/keycloak-config:/opt/keycloak/data/import
+    healthcheck:
+      test: ["CMD-SHELL", "cat < /dev/null > /dev/tcp/localhost/8080 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
     depends_on:
-      - keycloak-db
+      keycloak-db:
+        condition: service_healthy
     networks:
       - demo-network
 
+  # ── Message Broker ────────────────────────────────────────────────────
+
   rabbitmq:
-    image: rabbitmq:3-management
+    image: rabbitmq:3.13-management-alpine
     ports:
       - "5672:5672"
       - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
     networks:
       - demo-network
+
+  # ── Email Sink (Development Only) ─────────────────────────────────────
 
   mailhog:
     image: mailhog/mailhog
