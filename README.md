@@ -145,7 +145,7 @@ All client requests go through the **API Gateway** at `http://localhost:8080`.
 The API Gateway needs to synchronously create a banking customer profile during user registration. gRPC provides type-safe contracts via Protocol Buffers, lower latency than REST, and compile-time API validation between services.
 
 ### Why RabbitMQ for Events?
-Banking events (deposits, withdrawals, transfers) and user lifecycle events are published asynchronously to decouple services. Dead Letter Queues ensure zero message loss — failed messages are preserved for inspection and retry.
+Banking events (deposits, withdrawals, transfers) and user lifecycle events are published asynchronously to decouple services. Dead Letter Queues (DLQ) ensure zero message loss — failed messages are preserved for inspection and retry.
 
 ### Why Opaque Token Introspection?
 The API Gateway uses Keycloak's token introspection endpoint rather than local JWT validation. This enables real-time token revocation — when a user logs out, their token is immediately invalid across all services.
